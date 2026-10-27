@@ -6,11 +6,11 @@
 
 ## 2. Code
 
-- [ ] 2.1 Add `utils/white_wine.R` with `recode_white_to_high_low()` and `load_white_recoded_data()`, and source it from `utils/index.R`. Leave `utils/recode_to_high_low.R`, `utils/load_raw_data.R` and `utils/load_recoded_data.R` unedited.
-- [ ] 2.2 Add `dataset_csv()`, `reevaluation_dir()` and `reevaluation_source_files()` to `reevaluation/fit_reevaluation.R`, and a `dataset = "red"` argument to `load_recode_and_score()`, `job_key()` and `fit_reevaluation()`. Limit `protected_fit_path()` to red per-fit files.
-- [ ] 2.3 Add `dataset = "red"` to `run_gam_and_stack()` in `reevaluation/gam_and_stack.R`, so a white run reads and writes only under `results/reevaluation/white/` and builds its stack from white out-of-fold predictions.
-- [ ] 2.4 Add `combination_fits_dir()`, `combination_shared_files()` and a `dataset = "red"` argument to `combination_key()` and `fit_combinations()` in `utils/estimation/fit_combinations.R`.
-- [ ] 2.5 Add `reevaluation/white/red_checksums.R` and `reevaluation/white/fit_white.R`.
+- [x] 2.1 Add `utils/white_wine.R` with `recode_white_to_high_low()` and `load_white_recoded_data()`, and source it from `utils/index.R`. Leave `utils/recode_to_high_low.R`, `utils/load_raw_data.R` and `utils/load_recoded_data.R` unedited.
+- [x] 2.2 Add `dataset_csv()`, `reevaluation_dir()` and `reevaluation_source_files()` to `reevaluation/fit_reevaluation.R`, and a `dataset = "red"` argument to `load_recode_and_score()`, `job_key()` and `fit_reevaluation()`. Limit `protected_fit_path()` to red per-fit files.
+- [x] 2.3 Add `dataset = "red"` to `run_gam_and_stack()` in `reevaluation/gam_and_stack.R`, so a white run reads and writes only under `results/reevaluation/white/` and builds its stack from white out-of-fold predictions.
+- [x] 2.4 Add `combination_fits_dir()`, `combination_shared_files()` and a `dataset = "red"` argument to `combination_key()` and `fit_combinations()` in `utils/estimation/fit_combinations.R`.
+- [x] 2.5 Add `reevaluation/white/red_checksums.R` and `reevaluation/white/fit_white.R`.
 
 ## 3. Run
 
