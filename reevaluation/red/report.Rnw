@@ -18,7 +18,7 @@ source("libraries.R")
 source("reevaluation/step_winsorise.R")
 source("reevaluation/report_support.R")
 wine <- "red"
-results_dir <- "results/reevaluation/"
+results_dir <- "results/reevaluation/red/"
 raw <- load_raw_data("data/winequality-red.csv")
 scores <- as.integer(as.character(raw$quality))
 sample <- load_recoded_data("data/winequality-red.csv", "quality")
@@ -114,7 +114,7 @@ These components describe the trimmed sample. The classifiers below are the fits
 
 \section{Classification and discrimination}
 
-Each stored fit uses seeds 2021 to 2025, a stratified 80/20 split, and 10 by 10 stratified cross-validation on the training rows. High is the event for balanced accuracy. The grids are the ones already used for these families. The stored fits are read from \texttt{results/reevaluation/}.
+Each stored fit uses seeds 2021 to 2025, a stratified 80/20 split, and 10 by 10 stratified cross-validation on the training rows. High is the event for balanced accuracy. The grids are the ones already used for these families. The stored fits are read from \texttt{results/reevaluation/red/}.
 
 The thesis families are logistic regression, a polynomial support vector machine, a radial support vector machine, linear discriminant analysis and flexible discriminant analysis, each with no resampling, ROSE and class weights. The added families are a random forest, gradient boosting, LightGBM, a fuller gradient-boosting search, and three models of the integer score. A penalised generalised additive model follows. The comparison, the failures and the stack come after those fits.
 
