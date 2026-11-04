@@ -382,10 +382,13 @@ stack_metrics_from_scores <- function(truth, probability, threshold) {
   )
 }
 
-assemble_seed <- function(outer, svm_rerun, rf_rerun, fits_dir) {
+assemble_seed <- function(outer, svm_rerun, rf_rerun, fits_dir, dataset = NULL) {
   seed <- outer$seed
   if (!isTRUE(svm_rerun$pass) || !isTRUE(rf_rerun$pass)) {
     payload <- list(status = "not reproducible", seed = seed)
+    if (!is.null(dataset)) {
+      payload$dataset <- dataset
+    }
     saveRDS(payload, file.path(fits_dir, sprintf("stack__%d.rds", seed)))
     saveRDS(payload, file.path(fits_dir, sprintf("average__%d.rds", seed)))
     return(list(seed = seed, status = "not reproducible", stack = NA_real_, svm = NA_real_, average = NA_real_))
@@ -426,29 +429,29 @@ assemble_seed <- function(outer, svm_rerun, rf_rerun, fits_dir) {
   average_test <- (test_x$svm + test_x$rf + test_score_p) / 3
   average_metrics <- stack_metrics_from_scores(outer$test$quality, average_test, average_threshold)
   oof_rows <- outer$train_index[rows]
-  saveRDS(
-    list(
-      status = "ok",
-      seed = seed,
-      n_test_scored = blended$n_test_scored,
-      inputs = c("svm_radial__none", "rf__none", "score_rf__score"),
-      oof_rows = oof_rows,
-      train_index = outer$train_index,
-      test_index = outer$test_index,
-      penalty = blended$penalty,
-      metrics = stack_metrics
-    ),
-    file.path(fits_dir, sprintf("stack__%d.rds", seed))
+  stack_payload <- list(
+    status = "ok",
+    seed = seed,
+    n_test_scored = blended$n_test_scored,
+    inputs = c("svm_radial__none", "rf__none", "score_rf__score"),
+    oof_rows = oof_rows,
+    train_index = outer$train_index,
+    test_index = outer$test_index,
+    penalty = blended$penalty,
+    metrics = stack_metrics
   )
-  saveRDS(
-    list(
-      status = "ok",
-      seed = seed,
-      n_test_scored = 1L,
-      metrics = average_metrics
-    ),
-    file.path(fits_dir, sprintf("average__%d.rds", seed))
+  average_payload <- list(
+    status = "ok",
+    seed = seed,
+    n_test_scored = 1L,
+    metrics = average_metrics
   )
+  if (!is.null(dataset)) {
+    stack_payload$dataset <- dataset
+    average_payload$dataset <- dataset
+  }
+  saveRDS(stack_payload, file.path(fits_dir, sprintf("stack__%d.rds", seed)))
+  saveRDS(average_payload, file.path(fits_dir, sprintf("average__%d.rds", seed)))
   list(
     seed = seed,
     status = "ok",
@@ -468,7 +471,129 @@ gam_stack_guard_paths <- function() {
   )
 }
 
-run_gam_and_stack <- function(fits_dir = "results/reevaluation") {
+run_white_gam_and_stack <- function(fits_dir) {
+  Sys.setenv(
+    OMP_NUM_THREADS = "1",
+    MKL_NUM_THREADS = "1",
+    OPENBLAS_NUM_THREADS = "1"
+  )
+  started <- proc.time()[["elapsed"]]
+  cores <- parallel::detectCores(logical = TRUE)
+  if (is.na(cores) || cores < 1) {
+    cores <- 1L
+  }
+  cores <- as.integer(cores)
+  loaded <- load_recode_and_score(dataset = "white")
+  outers <- make_outer_splits(loaded$data, loaded$score, 2021:2025, 10, 10)
+  names(outers) <- as.character(2021:2025)
+  stored <- readRDS(file.path(fits_dir, "metrics.rds"))
+
+  jobs <- list()
+  for (outer in outers) {
+    for (arm in c("weights", "none")) {
+      jobs[[length(jobs) + 1]] <- list(outer = outer, arm = arm)
+    }
+  }
+
+  run_job <- function(job) {
+    payload <- tryCatch(
+      fit_gam_job(job$outer, job$arm),
+      error = function(e) {
+        spec <- reevaluation_models()$gam
+        list(metrics = empty_metrics(spec, job$arm, job$outer$seed, "na", conditionMessage(e)))
+      }
+    )
+    payload$dataset <- "white"
+    saveRDS(payload, file.path(fits_dir, sprintf("gam__%s__%d.rds", job$arm, job$outer$seed)))
+    list(ok = TRUE, seed = job$outer$seed, arm = job$arm)
+  }
+
+  message(sprintf("Running %d white GAM jobs on %d cores", length(jobs), cores))
+  finished <- parallel::mclapply(
+    jobs,
+    function(job) {
+      tryCatch(run_job(job), error = function(e) {
+        list(ok = FALSE, message = conditionMessage(e), seed = job$outer$seed)
+      })
+    },
+    mc.cores = cores,
+    mc.preschedule = FALSE,
+    mc.set.seed = TRUE
+  )
+  bad <- Filter(function(item) !isTRUE(item$ok), finished)
+  if (length(bad) > 0) {
+    stop(paste(vapply(bad, function(item) item$message, character(1)), collapse = "\n"))
+  }
+
+  message("Fitting the white blender from saved out-of-fold predictions")
+  as_input <- function(path) {
+    fit <- readRDS(path)
+    if (is.null(fit$oof) || is.null(fit$test) || !".pred_high" %in% names(fit$oof)) {
+      return(list(pass = FALSE, oof = NULL, test = NULL))
+    }
+    list(pass = TRUE, oof = fit$oof, test = fit$test)
+  }
+  assembled <- parallel::mclapply(
+    outers,
+    function(outer) {
+      tryCatch({
+        svm_fit <- as_input(file.path(fits_dir, sprintf("svm_radial__none__%d.rds", outer$seed)))
+        rf_fit <- as_input(file.path(fits_dir, sprintf("rf__none__%d.rds", outer$seed)))
+        piece <- assemble_seed(outer, svm_fit, rf_fit, fits_dir, dataset = "white")
+        stored_svm <- stored$bal_accuracy[
+          stored$model == "svm_radial" & stored$arm == "none" & stored$seed == outer$seed
+        ]
+        piece$svm <- stored_svm[[1]]
+        piece
+      }, error = function(e) {
+        list(ok = FALSE, message = conditionMessage(e), seed = outer$seed)
+      })
+    },
+    mc.cores = min(cores, length(outers)),
+    mc.preschedule = FALSE,
+    mc.set.seed = TRUE
+  )
+  assemble_bad <- Filter(function(item) isTRUE(item$ok == FALSE), assembled)
+  if (length(assemble_bad) > 0) {
+    stop(paste(vapply(assemble_bad, function(item) item$message, character(1)), collapse = "\n"))
+  }
+  stack_ba <- vapply(assembled, function(item) item$stack, numeric(1))
+  svm_ba <- vapply(assembled, function(item) item$svm, numeric(1))
+  average_ba <- vapply(assembled, function(item) item$average, numeric(1))
+  seeds <- vapply(assembled, function(item) item$seed, numeric(1))
+  if (anyNA(stack_ba)) {
+    decision <- list(
+      dataset = "white",
+      stack = stack_ba,
+      svm = svm_ba,
+      average = average_ba,
+      keep = FALSE,
+      seeds = seeds
+    )
+  } else {
+    rule <- stack_drop_rule(stack_ba, svm_ba, average_ba)
+    decision <- list(
+      dataset = "white",
+      stack = stack_ba,
+      svm = svm_ba,
+      average = average_ba,
+      keep = rule$keep,
+      svm_gap = rule$svm,
+      average_gap = rule$average,
+      seeds = seeds
+    )
+  }
+  saveRDS(decision, file.path(fits_dir, "stack_decision.rds"))
+  wall <- proc.time()[["elapsed"]] - started
+  message(sprintf("White GAM and stack finished in %.1f seconds", wall))
+  list(wall_seconds = wall, cores = cores)
+}
+
+run_gam_and_stack <- function(fits_dir = reevaluation_dir(dataset), dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  if (identical(dataset, "white")) {
+    return(run_white_gam_and_stack(fits_dir))
+  }
   Sys.setenv(
     OMP_NUM_THREADS = "1",
     MKL_NUM_THREADS = "1",

@@ -16,6 +16,48 @@ file_md5 <- function(path) {
   unname(sum[[1]])
 }
 
+assert_dataset <- function(dataset) {
+  if (!identical(dataset, "red") && !identical(dataset, "white")) {
+    stop("dataset must be \"red\" or \"white\", not ", dataset)
+  }
+  dataset
+}
+
+dataset_csv <- function(dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  if (identical(dataset, "white")) {
+    "data/winequality-white.csv"
+  } else {
+    "data/winequality-red.csv"
+  }
+}
+
+reevaluation_dir <- function(dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  if (identical(dataset, "white")) {
+    "results/reevaluation/white"
+  } else {
+    "results/reevaluation"
+  }
+}
+
+reevaluation_source_files <- function(dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  if (identical(dataset, "red")) {
+    return(source_files)
+  }
+  c(
+    "reevaluation/step_winsorise.R",
+    "reevaluation/metrics.R",
+    "reevaluation/recipes.R",
+    "reevaluation/models.R",
+    "reevaluation/fit_reevaluation.R",
+    "utils/white_wine.R",
+    "data/winequality-white.csv",
+    "renv.lock"
+  )
+}
+
 make_case_weights <- function(train) {
   n <- nrow(train)
   n_high <- sum(train$quality == "high")
@@ -65,6 +107,10 @@ params_text <- function(params) {
 original_tags <- c("lr", "svm_poly", "svm_radial", "lda", "fda", "rf", "xgb")
 
 protected_fit_path <- function(path) {
+  normalized <- gsub("\\\\", "/", path)
+  if (grepl("reevaluation/white/", normalized, fixed = TRUE)) {
+    return(FALSE)
+  }
   grepl(
     "^(lr|svm_poly|svm_radial|lda|fda|rf|xgb)__",
     basename(path)
@@ -99,11 +145,19 @@ empty_metrics <- function(model, arm, seed, status, detail) {
   )
 }
 
-load_recode_and_score <- function(path = "data/winequality-red.csv") {
-  data <- load_recoded_data(path, "quality")
+load_recode_and_score <- function(path = dataset_csv(dataset), dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  if (identical(dataset, "white")) {
+    data <- load_white_recoded_data(path, "quality")
+  } else {
+    data <- load_recoded_data(path, "quality")
+  }
   raw <- load_raw_data(path)
   score <- as.integer(as.character(raw$quality))
-  predictors <- setdiff(names(data), "quality")
+  # load_raw_data stamps every row as red. On white, that stamp is not a
+  # predictor and is not part of the recoded-vs-raw check.
+  drop <- if (identical(dataset, "white")) c("quality", "type") else "quality"
+  predictors <- setdiff(names(data), drop)
   if (!identical(data[predictors], raw[predictors])) {
     stop("The raw and recoded predictor rows do not match")
   }
@@ -220,8 +274,9 @@ engine_honors_case_weights <- function(engine) {
   max(abs(first - changed)) > 1e-6
 }
 
-job_key <- function(job, source_md5, v, repeats) {
-  list(
+job_key <- function(job, source_md5, v, repeats, dataset = "red") {
+  dataset <- assert_dataset(dataset)
+  key <- list(
     seed = job$seed,
     arm = job$arm,
     model = job$model$tag,
@@ -235,9 +290,14 @@ job_key <- function(job, source_md5, v, repeats) {
     event = "high",
     sources = source_md5
   )
+  if (identical(dataset, "white")) {
+    key$dataset <- "white"
+  }
+  key
 }
 
-fit_job <- function(job, source_md5, v, repeats) {
+fit_job <- function(job, source_md5, v, repeats, dataset = "red") {
+  dataset <- assert_dataset(dataset)
   if (protected_fit_path(job$path)) {
     if (!file.exists(job$path)) {
       stop("Refusing to create a new fit for an existing model: ", job$path)
@@ -247,7 +307,7 @@ fit_job <- function(job, source_md5, v, repeats) {
     return(loaded$metrics)
   }
 
-  key <- job_key(job, source_md5, v, repeats)
+  key <- job_key(job, source_md5, v, repeats, dataset = dataset)
   if (file.exists(job$path)) {
     loaded <- tryCatch(readRDS(job$path), error = function(e) NULL)
     if (is.list(loaded) && identical(loaded$key, key)) {
@@ -371,7 +431,8 @@ score_classification_job <- function(job) {
   if (!is.finite(scored$bal_accuracy)) {
     stop("The final fit produced no predictions")
   }
-  if (isTRUE(job$model$fresh)) {
+  keep_predictions <- isTRUE(job$model$fresh) || isTRUE(job$save_oof)
+  if (keep_predictions) {
     assert_oof_excludes_test(oof$.row, job$train_index, job$test_index, nrow(job$train))
   }
 
@@ -395,9 +456,9 @@ score_classification_job <- function(job) {
     n_test = nrow(job$test),
     detail = NA_character_,
     params = params_text(best),
-    pred_saved = isTRUE(job$model$fresh)
+    pred_saved = keep_predictions
   )
-  if (!isTRUE(job$model$fresh)) {
+  if (!keep_predictions) {
     return(metrics)
   }
   attach_predictions(
@@ -559,7 +620,7 @@ make_outer_splits <- function(data, score, seeds, v, repeats) {
 }
 
 fit_reevaluation <- function(
-  fits_dir = "results/reevaluation",
+  fits_dir = reevaluation_dir(dataset),
   seeds = 2021:2025,
   v = 10L,
   repeats = 10L,
@@ -567,8 +628,10 @@ fit_reevaluation <- function(
   arms = c("rose", "weights", "none"),
   metrics_file = "metrics.rds",
   run_file = "run.rds",
-  write_baseline = TRUE
+  write_baseline = TRUE,
+  dataset = "red"
 ) {
+  dataset <- assert_dataset(dataset)
   dir.create(fits_dir, recursive = TRUE, showWarnings = FALSE)
   Sys.setenv(OMP_NUM_THREADS = "1")
   cores <- parallel::detectCores(logical = TRUE)
@@ -577,14 +640,14 @@ fit_reevaluation <- function(
   }
   cores <- as.integer(cores)
 
-  loaded <- load_recode_and_score("data/winequality-red.csv")
+  loaded <- load_recode_and_score(dataset = dataset)
   data <- loaded$data
   outers <- make_outer_splits(data, loaded$score, seeds, v, repeats)
   models <- reevaluation_models()
   if (is.null(model_tags)) {
     model_tags <- original_tags
   }
-  source_md5 <- vapply(source_files, file_md5, character(1))
+  source_md5 <- vapply(reevaluation_source_files(dataset), file_md5, character(1))
 
   probe <- list()
   jobs <- list()
@@ -628,6 +691,9 @@ fit_reevaluation <- function(
           test_index = outer$test_index,
           weights_supported = weights_supported,
           grid_override = NULL,
+          save_oof = identical(dataset, "white") &&
+            identical(arm, "none") &&
+            tag %in% c("svm_radial", "rf"),
           path = file.path(fits_dir, file)
         )
       }
@@ -674,6 +740,7 @@ fit_reevaluation <- function(
     source_md5 = source_md5,
     v = v,
     repeats = repeats,
+    dataset = dataset,
     mc.cores = cores,
     mc.preschedule = FALSE,
     mc.set.seed = TRUE

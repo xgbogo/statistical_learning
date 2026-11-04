@@ -1,0 +1,219 @@
+\documentclass{article}
+\usepackage{booktabs,graphicx,array}
+\usepackage[margin=0.75in]{geometry}
+\begin{document}
+
+<<setup, include=FALSE>>=
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = "build/white/figures/white-",
+  fig.width = 7,
+  fig.height = 4.2
+)
+@
+
+<<load, include=FALSE>>=
+library(dplyr)
+library(ggplot2)
+results_dir <- "results/reevaluation/white/"
+if (!file.exists(file.path(results_dir, "run.rds"))) {
+  stop("White results are missing from results/reevaluation/white/")
+}
+metrics <- readRDS(file.path(results_dir, "metrics.rds"))
+baseline <- readRDS(file.path(results_dir, "baseline.rds"))
+one <- readRDS(file.path(results_dir, "run_one_split.rds"))
+run <- readRDS(file.path(results_dir, "run.rds"))
+decision <- readRDS(file.path(results_dir, "stack_decision.rds"))
+failures <- utils::read.delim(
+  file.path(results_dir, "failures.tsv"),
+  colClasses = "character"
+)
+gam_files <- list.files(results_dir, pattern = "^gam__[a-z]+__[0-9]{4}\\.rds$")
+gam <- dplyr::bind_rows(lapply(gam_files, function(file) {
+  readRDS(file.path(results_dir, file))$metrics
+}))
+stack <- dplyr::bind_rows(lapply(2021:2025, function(seed) {
+  item <- readRDS(file.path(results_dir, sprintf("stack__%d.rds", seed)))
+  if (!identical(item$status, "ok")) {
+    return(data.frame(
+      seed = seed, status = item$status,
+      bal_accuracy = NA_real_, pr_auc = NA_real_, roc_auc = NA_real_
+    ))
+  }
+  data.frame(
+    seed = seed,
+    status = item$status,
+    bal_accuracy = item$metrics$bal_accuracy,
+    pr_auc = item$metrics$pr_auc,
+    roc_auc = item$metrics$roc_auc
+  )
+}))
+average <- dplyr::bind_rows(lapply(2021:2025, function(seed) {
+  item <- readRDS(file.path(results_dir, sprintf("average__%d.rds", seed)))
+  if (!identical(item$status, "ok")) {
+    return(data.frame(seed = seed, status = item$status, bal_accuracy = NA_real_, pr_auc = NA_real_))
+  }
+  data.frame(
+    seed = seed,
+    status = item$status,
+    bal_accuracy = item$metrics$bal_accuracy,
+    pr_auc = item$metrics$pr_auc
+  )
+}))
+svm_none <- metrics[metrics$model == "svm_radial" & metrics$arm == "none", ]
+fmt <- function(x) ifelse(is.finite(x), sprintf("%.3f", x), "NA")
+by_model <- function(frame) {
+  frame %>%
+    dplyr::group_by(model, model_name, arm) %>%
+    dplyr::summarise(
+      n = dplyr::n(),
+      ok = sum(status == "ok"),
+      mean_ba = mean(bal_accuracy),
+      mean_pr = mean(pr_auc),
+      mean_auc = mean(roc_auc),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(dplyr::desc(mean_ba))
+}
+family_summary <- by_model(metrics)
+gam_summary <- by_model(gam)
+@
+
+\title{White-wine re-evaluation}
+\author{}
+\date{}
+\maketitle
+
+This note reports the white-wine re-evaluation on its own. Inputs and outputs stay under the white paths. The protocol is the red one: seeds 2021 to 2025, a stratified 80/20 split, 10 by 10 stratified cross-validation, the existing grids, balanced accuracy with high as the event, and the same drop rule.
+
+<<timing>>=
+one_hours <- one$wall_seconds / 3600
+full_hours <- run$wall_seconds / 3600
+cat(sprintf(
+  "One split (seed %s, %d combinations, %d by %d) took %.1f seconds (%.2f hours) on %d cores.\n",
+  paste(one$seeds, collapse = ","),
+  one$combinations,
+  one$v,
+  one$repeats,
+  one$wall_seconds,
+  one_hours,
+  one$cores
+))
+cat(sprintf(
+  "The full family run (%d combinations, seeds %s) took %.1f seconds (%.2f hours) on %d cores.\n",
+  run$combinations,
+  paste(run$seeds, collapse = ","),
+  run$wall_seconds,
+  full_hours,
+  run$cores
+))
+gam_path <- file.path(results_dir, "run_gam_stack.rds")
+if (file.exists(gam_path)) {
+  gam_run <- readRDS(gam_path)
+  cat(sprintf(
+    "The GAM and stack step took %.1f seconds (%.2f hours) on %d cores.\n",
+    gam_run$wall_seconds,
+    gam_run$wall_seconds / 3600,
+    gam_run$cores
+  ))
+}
+@
+
+\section{Failures}
+
+\Sexpr{nrow(failures)} rows in \texttt{failures.tsv}.
+
+<<failures>>=
+if (nrow(failures) == 0) {
+  cat("No fit failed.\n")
+} else {
+  print(knitr::kable(failures, format = "latex", booktabs = TRUE))
+}
+@
+
+\section{Balanced accuracy and PR AUC}
+
+Means are over the five splits. The radial SVM with no resampling is the reference for the stack.
+
+<<family-table>>=
+show <- family_summary
+show$mean_ba <- fmt(show$mean_ba)
+show$mean_pr <- fmt(show$mean_pr)
+show$mean_auc <- fmt(show$mean_auc)
+print(knitr::kable(
+  show,
+  format = "latex",
+  booktabs = TRUE,
+  col.names = c("Model", "Name", "Arm", "N", "OK", "BA", "PR AUC", "ROC AUC")
+))
+@
+
+<<family-figure, fig.cap="Mean balanced accuracy by model and arm.">>=
+plot_df <- family_summary
+plot_df$label <- paste(plot_df$model, plot_df$arm)
+ggplot2::ggplot(plot_df, ggplot2::aes(x = reorder(label, mean_ba), y = mean_ba)) +
+  ggplot2::geom_col() +
+  ggplot2::coord_flip() +
+  ggplot2::labs(x = NULL, y = "Mean balanced accuracy")
+@
+
+<<gam-table>>=
+if (nrow(gam_summary) == 0) {
+  cat("No GAM fits were found.\n")
+} else {
+  show <- gam_summary
+  show$mean_ba <- fmt(show$mean_ba)
+  show$mean_pr <- fmt(show$mean_pr)
+  show$mean_auc <- fmt(show$mean_auc)
+  print(knitr::kable(
+    show,
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Model", "Name", "Arm", "N", "OK", "BA", "PR AUC", "ROC AUC")
+  ))
+}
+@
+
+\section{Stack}
+
+<<stack>>=
+cat(sprintf(
+  "Radial SVM, no resampling: mean BA %s, mean PR AUC %s.\n",
+  fmt(mean(svm_none$bal_accuracy)),
+  fmt(mean(svm_none$pr_auc))
+))
+cat(sprintf(
+  "Stack: mean BA %s, mean PR AUC %s. Statuses: %s.\n",
+  fmt(mean(stack$bal_accuracy)),
+  fmt(mean(stack$pr_auc)),
+  paste(sprintf("%d:%s", stack$seed, stack$status), collapse = ", ")
+))
+cat(sprintf(
+  "Average of the three inputs: mean BA %s, mean PR AUC %s.\n",
+  fmt(mean(average$bal_accuracy)),
+  fmt(mean(average$pr_auc))
+))
+cat(sprintf("Drop rule keep: %s.\n", if (isTRUE(decision$keep)) "yes" else "no"))
+if (!is.null(decision$svm_gap)) {
+  cat(sprintf(
+    "Paired gap versus the radial SVM: positive on %d of 5, mean %s, sd %s.\n",
+    decision$svm_gap$positive,
+    fmt(decision$svm_gap$mean),
+    fmt(decision$svm_gap$sd)
+  ))
+  cat(sprintf(
+    "Paired gap versus the average: positive on %d of 5, mean %s, sd %s.\n",
+    decision$average_gap$positive,
+    fmt(decision$average_gap$mean),
+    fmt(decision$average_gap$sd)
+  ))
+}
+cat("Split balanced accuracies (stack, radial SVM, average):\n")
+print(rbind(stack = decision$stack, svm = decision$svm, average = decision$average))
+@
+
+The always-low baseline balanced accuracy on these splits has mean \Sexpr{fmt(mean(baseline$bal_accuracy))}.
+
+\end{document}

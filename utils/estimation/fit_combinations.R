@@ -32,8 +32,40 @@ file_md5 <- function(path) {
   unname(sum[[1]])
 }
 
-combination_key <- function(model_tag, recipe_tag, shared_md5) {
-  list(
+check_dataset <- function(dataset) {
+  if (!identical(dataset, "red") && !identical(dataset, "white")) {
+    stop("dataset must be \"red\" or \"white\", not ", dataset)
+  }
+  dataset
+}
+
+combination_fits_dir <- function(dataset = "red") {
+  dataset <- check_dataset(dataset)
+  if (identical(dataset, "white")) {
+    "results/reevaluation/white/fits"
+  } else {
+    "results/fits"
+  }
+}
+
+combination_shared_files <- function(dataset = "red") {
+  dataset <- check_dataset(dataset)
+  if (identical(dataset, "red")) {
+    return(shared_source_files)
+  }
+  c(
+    "utils/recipes/step_recipe.R",
+    "utils/estimation/pipeline.R",
+    "utils/load_raw_data.R",
+    "utils/white_wine.R",
+    "data/winequality-white.csv",
+    "renv.lock"
+  )
+}
+
+combination_key <- function(model_tag, recipe_tag, shared_md5, dataset = "red") {
+  dataset <- check_dataset(dataset)
+  key <- list(
     seed = project_seed,
     rng = "L'Ecuyer-CMRG",
     split_prop = 0.8,
@@ -46,10 +78,15 @@ combination_key <- function(model_tag, recipe_tag, shared_md5) {
     recipe = file_md5(recipe_source_files[[recipe_tag]]),
     shared = shared_md5
   )
+  if (identical(dataset, "white")) {
+    key$dataset <- "white"
+  }
+  key
 }
 
-fit_combinations <- function() {
-  fits_dir <- "results/fits"
+fit_combinations <- function(dataset = "red") {
+  dataset <- check_dataset(dataset)
+  fits_dir <- combination_fits_dir(dataset)
   dir.create(fits_dir, recursive = TRUE, showWarnings = FALSE)
 
   cores <- parallel::detectCores(logical = TRUE)
@@ -61,7 +98,11 @@ fit_combinations <- function() {
   RNGkind("L'Ecuyer-CMRG")
   set.seed(project_seed)
 
-  data <- load_recoded_data("data/winequality-red.csv", "quality")
+  if (identical(dataset, "white")) {
+    data <- load_white_recoded_data("data/winequality-white.csv", "quality")
+  } else {
+    data <- load_recoded_data("data/winequality-red.csv", "quality")
+  }
   data_split <- rsample::initial_split(data, prop = .8)
   train_data <- rsample::training(data_split)
   training_folds <- rsample::vfold_cv(train_data, v = 10, repeats = 10, strata = quality)
@@ -73,7 +114,7 @@ fit_combinations <- function() {
     recipe_config = recipe_specs(train_data, "quality")
   ) %>% purrr::cross()
 
-  shared_md5 <- vapply(shared_source_files, file_md5, character(1), USE.NAMES = FALSE)
+  shared_md5 <- vapply(combination_shared_files(dataset), file_md5, character(1), USE.NAMES = FALSE)
 
   jobs <- lapply(combos, function(combo) {
     model_tag <- combo$model_config$tag
@@ -81,7 +122,7 @@ fit_combinations <- function() {
     file <- sprintf("%s__%s.rds", model_tag, recipe_tag)
     list(
       combo = combo,
-      key = combination_key(model_tag, recipe_tag, shared_md5),
+      key = combination_key(model_tag, recipe_tag, shared_md5, dataset = dataset),
       path = file.path(fits_dir, file),
       file = file
     )
