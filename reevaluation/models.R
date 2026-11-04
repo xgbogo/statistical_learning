@@ -119,6 +119,21 @@ reevaluation_models <- function() {
     probe_weights = FALSE,
     score = TRUE
   )
+  # select_features = TRUE is mgcv's select = TRUE. REML picks the smoothness
+  # on the likelihood. There is no tuning grid.
+  models$gam <- list(
+    model = parsnip::gen_additive_mod(select_features = TRUE) %>%
+      parsnip::set_engine("mgcv", method = "REML") %>%
+      parsnip::set_mode("classification"),
+    name = "Penalised GAM",
+    tag = "gam",
+    grid = NULL,
+    grid_fn = NULL,
+    arms = c("weights", "none"),
+    fresh = TRUE,
+    probe_weights = FALSE,
+    score = FALSE
+  )
   models
 }
 

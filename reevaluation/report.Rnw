@@ -356,6 +356,208 @@ if (nrow(failed) == 0) {
 }
 @
 
+The penalised GAM puts \texttt{s(x, k = 5)} on each of the 11 measurements, with \texttt{select = TRUE} and REML, and no grid.
+REML chooses the smoothness inside each fit on the likelihood, so balanced accuracy is not used to pick how wiggly a term is.
+Balanced accuracy places only the cut-off, from the out-of-fold probabilities.
+The same five splits are used.
+The radial SVM and the random forest, both with no resampling, are rerun through that 10 by 10 at their stored hyperparameters.
+A seed is stacked only when both reruns match the stored test metrics within \(10^{-9}\).
+
+<<gam-stack, include=FALSE>>=
+gam_index <- expand.grid(arm = c("weights", "none"), seed = 2021:2025, stringsAsFactors = FALSE)
+gam_index <- gam_index[order(gam_index$arm, gam_index$seed), ]
+gam_fits <- lapply(seq_len(nrow(gam_index)), function(i) {
+  readRDS(sprintf("%s/gam__%s__%d.rds", results_dir, gam_index$arm[[i]], gam_index$seed[[i]]))
+})
+edf_long <- do.call(rbind, lapply(seq_len(nrow(gam_index)), function(i) {
+  edf <- gam_fits[[i]]$metrics$edf[[1]]
+  data.frame(
+    arm = gam_index$arm[[i]],
+    seed = gam_index$seed[[i]],
+    term = names(edf),
+    edf = as.numeric(edf),
+    stringsAsFactors = FALSE
+  )
+}))
+term_order <- names(gam_fits[[1]]$metrics$edf[[1]])
+edf_wide <- function(arm_name) {
+  sub <- edf_long[edf_long$arm == arm_name, ]
+  columns <- lapply(2021:2025, function(seed) {
+    vals <- sub$edf[sub$seed == seed]
+    names(vals) <- sub$term[sub$seed == seed]
+    vals[term_order]
+  })
+  mat <- do.call(cbind, columns)
+  shown <- data.frame(Term = term_order, stringsAsFactors = FALSE)
+  for (j in seq_len(ncol(mat))) {
+    shown[[as.character(2020 + j)]] <- sprintf("%.3f", mat[, j])
+  }
+  shown$Mean <- sprintf("%.3f", rowMeans(mat))
+  shown
+}
+partial_one <- function(arm_name) {
+  rows <- gam_index$arm == arm_name
+  dat <- do.call(rbind, lapply(which(rows), function(i) {
+    piece <- gam_fits[[i]]$partial
+    piece$seed <- gam_index$seed[[i]]
+    piece
+  }))
+  dat <- dat[order(dat$term, dat$seed, dat$x), ]
+  dat$term <- factor(dat$term, levels = term_order)
+  dat
+}
+draw_partial <- function(arm_name) {
+  ggplot(partial_one(arm_name), aes(x, contribution, group = factor(seed), colour = factor(seed))) +
+    geom_hline(yintercept = 0, linewidth = 0.2) +
+    geom_line(linewidth = 0.3) +
+    facet_wrap(~ term, scales = "free", ncol = 3) +
+    labs(x = NULL, y = "Link-scale contribution", colour = "Seed") +
+    theme_bw() +
+    theme(legend.position = "bottom")
+}
+gam_mean <- function(arm_name) {
+  rows <- lapply(which(gam_index$arm == arm_name), function(i) gam_fits[[i]]$metrics)
+  bound <- dplyr::bind_rows(rows)
+  bound <- bound[order(bound$seed), ]
+  c(
+    ba = mean(bound$bal_accuracy),
+    roc = mean(bound$roc_auc),
+    pr = mean(bound$pr_auc)
+  )
+}
+stack_fits <- lapply(2021:2025, function(seed) readRDS(sprintf("%s/stack__%d.rds", results_dir, seed)))
+average_fits <- lapply(2021:2025, function(seed) readRDS(sprintf("%s/average__%d.rds", results_dir, seed)))
+decision <- readRDS(file.path(results_dir, "stack_decision.rds"))
+run_gs <- readRDS(file.path(results_dir, "run_gam_stack.rds"))
+rerun_rows <- lapply(c("svm_radial", "rf"), function(model) {
+  lapply(2021:2025, function(seed) {
+    r <- readRDS(sprintf("%s/oof_rerun/%s__none__%d.rds", results_dir, model, seed))
+    data.frame(model = model, seed = seed, pass = isTRUE(r$pass), stringsAsFactors = FALSE)
+  })
+})
+rerun_rows <- do.call(rbind, unlist(rerun_rows, recursive = FALSE))
+seeds_stacked <- sum(tapply(rerun_rows$pass, rerun_rows$seed, all))
+svm_ref <- metrics %>%
+  dplyr::filter(model == "svm_radial", arm == "none") %>%
+  dplyr::arrange(seed)
+if (!identical(svm_ref$seed, 2021:2025)) stop("Radial SVM rows are not in seed order")
+if (!identical(as.integer(decision$seeds), 2021:2025)) stop("Stack decision is not in seed order")
+mean_or_na <- function(fits, column) {
+  vals <- vapply(fits, function(item) {
+    if (!identical(item$status, "ok")) return(NA_real_)
+    item$metrics[[column]][[1]]
+  }, numeric(1))
+  mean(vals)
+}
+stack_means <- c(
+  ba = mean_or_na(stack_fits, "bal_accuracy"),
+  roc = mean_or_na(stack_fits, "roc_auc"),
+  pr = mean_or_na(stack_fits, "pr_auc")
+)
+average_means <- c(
+  ba = mean_or_na(average_fits, "bal_accuracy"),
+  roc = mean_or_na(average_fits, "roc_auc"),
+  pr = mean_or_na(average_fits, "pr_auc")
+)
+svm_means <- c(
+  ba = mean(svm_ref$bal_accuracy),
+  roc = mean(svm_ref$roc_auc),
+  pr = mean(svm_ref$pr_auc)
+)
+gam_weights_means <- gam_mean("weights")
+gam_none_means <- gam_mean("none")
+@
+
+<<gam-edf-weights, results="asis">>=
+knitr::kable(
+  edf_wide("weights"),
+  format = "latex",
+  booktabs = TRUE,
+  caption = "Effective degrees of freedom for the class-weighted GAM. Each column is the final training fit on that split. The mean is across the five seeds."
+) %>%
+  kable_styling(font_size = 8, latex_options = "scale_down")
+@
+
+<<gam-edf-none, results="asis">>=
+knitr::kable(
+  edf_wide("none"),
+  format = "latex",
+  booktabs = TRUE,
+  caption = "Effective degrees of freedom for the unweighted GAM. Each column is the final training fit on that split. The mean is across the five seeds."
+) %>%
+  kable_styling(font_size = 8, latex_options = "scale_down")
+@
+
+<<gam-partial-weights, fig.height=8, fig.width=7.2, fig.cap="Partial effects of the class-weighted GAM on the link scale. Each line is the final training fit for one split.">>=
+draw_partial("weights")
+@
+
+<<gam-partial-none, fig.height=8, fig.width=7.2, fig.cap="Partial effects of the unweighted GAM on the link scale. Each line is the final training fit for one split.">>=
+draw_partial("none")
+@
+
+<<gam-compare, results="asis">>=
+compare <- data.frame(
+  Model = c("Penalised GAM", "Penalised GAM", "Stack", "Simple average", "Radial SVM"),
+  Arm = c("class weights", "no resampling", "out-of-fold blend", "out-of-fold mean", "no resampling"),
+  `Balanced accuracy` = fmt(c(gam_weights_means[["ba"]], gam_none_means[["ba"]], stack_means[["ba"]], average_means[["ba"]], svm_means[["ba"]])),
+  `ROC AUC` = fmt(c(gam_weights_means[["roc"]], gam_none_means[["roc"]], stack_means[["roc"]], average_means[["roc"]], svm_means[["roc"]])),
+  `PR AUC` = fmt(c(gam_weights_means[["pr"]], gam_none_means[["pr"]], stack_means[["pr"]], average_means[["pr"]], svm_means[["pr"]])),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+knitr::kable(
+  compare,
+  format = "latex",
+  booktabs = TRUE,
+  caption = "Mean test metrics over seeds 2021 to 2025. The stack and the average are scored once, at a cut-off chosen from their own out-of-fold predictions. The radial SVM row is the stored fit."
+) %>%
+  kable_styling(font_size = 9)
+@
+
+<<gam-verdict, results="asis">>=
+cat(sprintf(
+  "The 10 by 10 reruns passed the \\(10^{-9}\\) gate on %d of %d model-by-seed jobs, so %d of 5 seeds were stacked. Wall time was %.1f seconds on %d cores.\n\n",
+  sum(rerun_rows$pass), nrow(rerun_rows), seeds_stacked, run_gs$wall_seconds, run_gs$cores
+))
+if (anyNA(decision$stack) || any(vapply(stack_fits, function(item) !identical(item$status, "ok"), logical(1)))) {
+  cat("At least one seed is not reproducible, so the stack is not worth keeping.\n")
+} else {
+  pen_grid <- dials::grid_regular(dials::penalty(), levels = 25)
+  penalties <- vapply(stack_fits, function(item) item$penalty[[1]], numeric(1))
+  d_svm <- decision$stack - decision$svm
+  d_avg <- decision$stack - decision$average
+  cat(sprintf(
+    "Paired gain in test balanced accuracy against the radial SVM: %s. Mean %+.4f, sample sd %.4f, %d of 5 strictly positive.\n\n",
+    paste(sprintf("%+.4f", d_svm), collapse = ", "),
+    mean(d_svm), stats::sd(d_svm), sum(d_svm > 0)
+  ))
+  cat(sprintf(
+    "Paired gain against the simple average: %s. Mean %+.4f, sample sd %.4f, %d of 5 strictly positive.\n\n",
+    paste(sprintf("%+.4f", d_avg), collapse = ", "),
+    mean(d_avg), stats::sd(d_avg), sum(d_avg > 0)
+  ))
+  if (isTRUE(decision$keep)) {
+    cat("The stack clears both references on the pre-registered rule, so it is kept.\n")
+  } else {
+    cat("The stack is not worth keeping. The numbers stay as evidence.\n\n")
+  }
+  if (length(unique(penalties)) == 1 && isTRUE(all.equal(penalties[[1]], min(pen_grid$penalty)))) {
+    cat(sprintf(
+      "The blender's penalty landed at the bottom of its grid (%.3g) on every seed, and the grid was deliberately not extended after seeing the result, because the drop rule was set in advance and the stack matches the simple average anyway.\n",
+      penalties[[1]]
+    ))
+  } else {
+    cat(sprintf(
+      "Selected penalties: %s. The 25-point grid runs from %.3g to %.3g.\n",
+      paste(sprintf("%.3g", penalties), collapse = ", "),
+      min(pen_grid$penalty),
+      max(pen_grid$penalty)
+    ))
+  }
+}
+@
+
 The graded winsorise call passes \texttt{prob = 0.999} on a data frame. That method gives the extra arguments to \texttt{as.matrix}, so 0.999 never arrives. The transform that runs uses the multivariate default: median, MAD, a Huber correlation, and chi-square probability 0.95. This note freezes those statistics on the training predictors and does not read the label.
 
 \end{document}
