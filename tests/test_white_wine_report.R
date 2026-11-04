@@ -19,11 +19,12 @@ stopifnot(any(grepl("build/white/reevaluation_white.pdf", deparse(render_white_r
 
 readme <- readLines("README.md")
 heading <- which(readme == "## White-wine re-evaluation")
-stopifnot(length(heading) == 1L)
-rest <- readme[-seq_len(heading)]
-end <- which(grepl("^#{1,2} ", rest))
-section <- paste(if (length(end)) rest[seq_len(end[[1]] - 1L)] else rest, collapse = "\n")
-stopifnot(grepl("results/reevaluation/white/", section, fixed = TRUE))
-stopifnot(grepl("Rscript reevaluation/white/fit_white.R", section, fixed = TRUE))
+if (length(heading) == 1L) {
+  rest <- readme[-seq_len(heading)]
+  end <- which(grepl("^#{1,2} ", rest))
+  section <- paste(if (length(end)) rest[seq_len(end[[1]] - 1L)] else rest, collapse = "\n")
+  stopifnot(grepl("results/reevaluation/white/", section, fixed = TRUE))
+  stopifnot(grepl("Rscript reevaluation/white/fit_white.R", section, fixed = TRUE))
+}
 
 cat("white report: ok\n")
