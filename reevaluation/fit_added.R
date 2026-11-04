@@ -9,7 +9,7 @@ source("reevaluation/models.R")
 source("reevaluation/fit_reevaluation.R")
 
 added_tags <- c("lgb", "xgb_full", "score_rf", "score_lgb", "score_lin")
-fits_dir <- "results/reevaluation"
+fits_dir <- reevaluation_dir()
 
 guard_paths <- function() {
   list.files(fits_dir, pattern = "^(lr|svm_poly|svm_radial|lda|fda|rf|xgb)__.*\\.rds$", full.names = TRUE)

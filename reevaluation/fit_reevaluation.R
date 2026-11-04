@@ -37,7 +37,7 @@ reevaluation_dir <- function(dataset = "red") {
   if (identical(dataset, "white")) {
     "results/reevaluation/white"
   } else {
-    "results/reevaluation"
+    "results/reevaluation/red"
   }
 }
 

@@ -30,13 +30,13 @@ c2 <- fit_blender(x2, y, test_a, seed = 2021)
 stopifnot(!identical(c(a$penalty, a$threshold), c(c2$penalty, c2$threshold)))
 
 for (seed in 2021:2025) {
-  s <- readRDS(sprintf("results/reevaluation/stack__%d.rds", seed))
+  s <- readRDS(sprintf("results/reevaluation/red/stack__%d.rds", seed))
   if (identical(s$status, "not reproducible")) next
   stopifnot(identical(s$n_test_scored, 1L))
   stopifnot(identical(sort(s$inputs), sort(c("svm_radial__none", "rf__none", "score_rf__score"))))
   stopifnot(all(s$oof_rows %in% s$train_index), length(intersect(s$oof_rows, s$test_index)) == 0)
   for (name in c("stack", "average")) {
-    m <- readRDS(sprintf("results/reevaluation/%s__%d.rds", name, seed))$metrics
+    m <- readRDS(sprintf("results/reevaluation/red/%s__%d.rds", name, seed))$metrics
     stopifnot(all(c("bal_accuracy", "roc_auc", "pr_auc", "precision", "recall", "threshold") %in% names(m)))
   }
 }
