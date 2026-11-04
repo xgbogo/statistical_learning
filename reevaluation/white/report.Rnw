@@ -1,6 +1,7 @@
 \documentclass{article}
-\usepackage{booktabs,graphicx,array}
+\usepackage{booktabs,longtable,graphicx,array,float}
 \usepackage[margin=0.75in]{geometry}
+\setlength{\tabcolsep}{4pt}
 \begin{document}
 
 <<setup, include=FALSE>>=
@@ -9,76 +10,51 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE,
   fig.path = "build/white/figures/white-",
+  fig.pos = "H",
   fig.width = 7,
   fig.height = 4.2
 )
-@
-
-<<load, include=FALSE>>=
-library(dplyr)
-library(ggplot2)
+source("libraries.R")
+source("reevaluation/step_winsorise.R")
+source("reevaluation/report_support.R")
+wine <- "white"
 results_dir <- "results/reevaluation/white/"
-if (!file.exists(file.path(results_dir, "run.rds"))) {
-  stop("White results are missing from results/reevaluation/white/")
-}
-metrics <- readRDS(file.path(results_dir, "metrics.rds"))
-baseline <- readRDS(file.path(results_dir, "baseline.rds"))
+raw <- load_raw_data("data/winequality-white.csv")
+scores <- as.integer(as.character(raw$quality))
+sample <- load_white_recoded_data()
+split_file <- readRDS(file.path(results_dir, "stack__2021.rds"))
+eda <- prepare_eda(sample, scores, split_file$train_index, split_file$test_index)
+metrics <- load_report_metrics(results_dir)
+stack_record <- load_stack_record(results_dir, metrics)
 one <- readRDS(file.path(results_dir, "run_one_split.rds"))
 run <- readRDS(file.path(results_dir, "run.rds"))
-decision <- readRDS(file.path(results_dir, "stack_decision.rds"))
+gam_run <- readRDS(file.path(results_dir, "run_gam_stack.rds"))
 failures <- utils::read.delim(
   file.path(results_dir, "failures.tsv"),
   colClasses = "character"
 )
-gam_files <- list.files(results_dir, pattern = "^gam__[a-z]+__[0-9]{4}\\.rds$")
-gam <- dplyr::bind_rows(lapply(gam_files, function(file) {
-  readRDS(file.path(results_dir, file))$metrics
-}))
-stack <- dplyr::bind_rows(lapply(2021:2025, function(seed) {
-  item <- readRDS(file.path(results_dir, sprintf("stack__%d.rds", seed)))
-  if (!identical(item$status, "ok")) {
-    return(data.frame(
-      seed = seed, status = item$status,
-      bal_accuracy = NA_real_, pr_auc = NA_real_, roc_auc = NA_real_
-    ))
-  }
-  data.frame(
-    seed = seed,
-    status = item$status,
-    bal_accuracy = item$metrics$bal_accuracy,
-    pr_auc = item$metrics$pr_auc,
-    roc_auc = item$metrics$roc_auc
-  )
-}))
-average <- dplyr::bind_rows(lapply(2021:2025, function(seed) {
-  item <- readRDS(file.path(results_dir, sprintf("average__%d.rds", seed)))
-  if (!identical(item$status, "ok")) {
-    return(data.frame(seed = seed, status = item$status, bal_accuracy = NA_real_, pr_auc = NA_real_))
-  }
-  data.frame(
-    seed = seed,
-    status = item$status,
-    bal_accuracy = item$metrics$bal_accuracy,
-    pr_auc = item$metrics$pr_auc
-  )
-}))
-svm_none <- metrics[metrics$model == "svm_radial" & metrics$arm == "none", ]
-fmt <- function(x) ifelse(is.finite(x), sprintf("%.3f", x), "NA")
-by_model <- function(frame) {
-  frame %>%
-    dplyr::group_by(model, model_name, arm) %>%
-    dplyr::summarise(
-      n = dplyr::n(),
-      ok = sum(status == "ok"),
-      mean_ba = mean(bal_accuracy),
-      mean_pr = mean(pr_auc),
-      mean_auc = mean(roc_auc),
-      .groups = "drop"
-    ) %>%
-    dplyr::arrange(dplyr::desc(mean_ba))
-}
-family_summary <- by_model(metrics)
-gam_summary <- by_model(gam)
+stopifnot(sprintf("%.3f", one$wall_seconds) == "30910.768")
+stopifnot(sprintf("%.1f", run$wall_seconds) == "130757.1")
+stopifnot(sprintf("%.3f", gam_run$wall_seconds) == "1763.336")
+stopifnot(nrow(failures) == 0L)
+stopifnot(identical(stack_record$decision$keep, FALSE))
+stopifnot(num17(stack_record$decision$svm_gap$mean) == "0.028859571540880501")
+stopifnot(num17(stack_record$decision$svm_gap$sd) == "0.013710128634384687")
+stopifnot(identical(as.integer(stack_record$decision$svm_gap$positive), 5L))
+stopifnot(num17(stack_record$decision$average_gap$mean) == "0.00035623034591192315")
+stopifnot(num17(stack_record$decision$average_gap$sd) == "0.0024684947289231123")
+stopifnot(identical(as.integer(stack_record$decision$average_gap$positive), 2L))
+stopifnot(length(unique(stack_record$penalties)) == 1L)
+stopifnot(isTRUE(all.equal(stack_record$penalties[[1]], 1e-10)))
+rf <- mean_of(metrics, "rf", "none")
+score_rf <- mean_of(metrics, "score_rf", "score")
+svm_ref <- mean_of(metrics, "svm_radial", "none")
+stopifnot(num17(rf$ba) == "0.82319673742138366")
+stopifnot(num17(rf$pr) == "0.78762255519006574")
+stopifnot(num17(score_rf$ba) == "0.82690398977987423")
+stopifnot(num17(score_rf$pr) == "0.76133556019168169")
+stopifnot(num17(svm_ref$ba) == "0.80533117138364785")
+stopifnot(num17(svm_ref$pr) == "0.76343665515071568")
 @
 
 \title{White-wine re-evaluation}
@@ -86,134 +62,287 @@ gam_summary <- by_model(gam)
 \date{}
 \maketitle
 
-This note reports the white-wine re-evaluation on its own. Inputs and outputs stay under the white paths. The protocol is the red one: seeds 2021 to 2025, a stratified 80/20 split, 10 by 10 stratified cross-validation, the existing grids, balanced accuracy with high as the event, and the same drop rule.
+\section{Introduction}
 
-<<timing>>=
-one_hours <- one$wall_seconds / 3600
-full_hours <- run$wall_seconds / 3600
+Several classification methods are used in this report with the objective of selecting high quality wines from a sample that records the quality and the chemical composition of green wines of the \Sexpr{wine} variety from the north of Portugal.
+
+High and low labels are used so that the task is to select a high quality wine. A score of 7 or above is high, and a lower score is low.
+
+The sample is described next, including the differences between those two labels and the correlations among the measurements. Outliers are identified in each class and the measurements are winsorised. The trimmed sample is standardised and its leading principal components are extracted. The classification then reports each family, compares the stored results, records the failures, and applies the stack rule. The conclusion says what the labels are for and what a sample from one time can support.
+
+\section{Exploratory data analysis}
+
+\subsection{Data description}
+
+This dataset contains \Sexpr{eda$n} observations and no missing values in eleven chemical features and a quality assessment for green wine samples of the \Sexpr{wine} variety from the north of Portugal.
+
+The eleven measurements are fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sulphates and alcohol. The quality score is the median of at least three assessments, on a scale from 0 to 10. Observed scores run from \Sexpr{eda$score_min} to \Sexpr{eda$score_max}.
+
+A score of 7 or above is labelled high and a lower score is labelled low. That gives \Sexpr{eda$n_low} low wines and \Sexpr{eda$n_high} high wines. The labels are unbalanced, so later comparisons use balanced accuracy with high as the event, together with the area under the precision-recall curve.
+
+<<shift-sentence, results="asis">>=
+cat(eda$shift_sentence, "\n")
+cat(eda$correlation_sentence, "\n")
+@
+
+<<class-means, results="asis">>=
+class_means_kable(eda)
+@
+
+<<counts, fig.cap="Counts of the quality score and of the high and low labels.", fig.show="hold", out.width=".49\\linewidth", fig.height=3.6>>=
+print(score_count_plot(scores))
+print(label_count_plot(sample$quality))
+@
+
+<<densities, fig.cap="Densities of the three measurements with the largest standardised difference between high and low.", fig.height=4.4>>=
+density_plot(eda$raw, eda$top_variables)
+@
+
+<<correlation, fig.cap="Correlations among the eleven measurements.", fig.height=5.2>>=
+correlation_plot(eda$raw)
+@
+
+\subsection{Outlier detection}
+
+Both classes are checked for outliers with a robust principal-component map. The axes are the score distance and the orthogonal distance, and a point is marked when it passes the chi-square cutoff at probability 0.999. The number of components is the number kept by the standardised analysis below, so the maps before and after trimming use the same dimension.
+
+Before trimming, the map marks \Sexpr{eda$out_before[["low"]]} of the low wines and \Sexpr{eda$out_before[["high"]]} of the high wines.
+
+<<out-before, fig.cap="Robust principal-component outlier map for each class, before trimming.", fig.show="hold", out.width=".49\\linewidth", fig.height=4.6>>=
+draw_saved_maps(eda$before_maps)
+@
+
+The measurements are then winsorised. The centre is the median of the training rows, the scale is their median absolute deviation, and the shape is a Huber correlation with constant 2. A row whose robust distance exceeds the chi-square cutoff at probability \Sexpr{eda$prob} is pulled back to that cutoff. The limits are estimated on the \Sexpr{eda$n_train} training rows of the stratified 80/20 split with seed 2021, and those same limits are applied to every row of the sample. The \Sexpr{eda$n_test} test rows do not enter the median, the deviation or the correlation.
+
+The limits move \Sexpr{eda$n_moved} of \Sexpr{eda$n} rows (\Sexpr{eda$n_moved_low} low and \Sexpr{eda$n_moved_high} high). After trimming, the map marks \Sexpr{eda$out_after[["low"]]} low wines and \Sexpr{eda$out_after[["high"]]} high wines.
+
+<<out-after, fig.cap="Robust principal-component outlier map for each class, after trimming with the training limits.", fig.show="hold", out.width=".49\\linewidth", fig.height=4.6>>=
+draw_saved_maps(eda$after_maps)
+@
+
+\subsection{Data reduction}
+
+Total sulfur dioxide spans \Sexpr{sprintf("%.1f", eda$range_so2)} while density spans \Sexpr{sprintf("%.4f", eda$range_density)}, so the ranges are not comparable. The trimmed measurements are therefore standardised, and classical principal components are computed on that standardised sample. Components are kept until the cumulative variance reaches at least 80 percent. The first \Sexpr{eda$k} components explain \Sexpr{sprintf("%.1f", 100 * eda$cum)} percent of the variance.
+
+<<loading-sentence, results="asis">>=
+cat(eda$loading_sentence, "\n")
+@
+
+<<pca-table, results="asis">>=
+pca_kable(eda)
+@
+
+<<loadings, fig.cap="Four largest absolute loadings on each retained principal component.", fig.height=5>>=
+loadings_plot(eda)
+@
+
+These components describe the trimmed sample. The classifiers below are the fits already stored. They are not refit on the component scores.
+
+\section{Classification and discrimination}
+
+Each stored fit uses seeds 2021 to 2025, a stratified 80/20 split, and 10 by 10 stratified cross-validation on the training rows. High is the event for balanced accuracy. The grids are the ones already used for these families. The stored fits are read from \texttt{results/reevaluation/white/}.
+
+The thesis families are logistic regression, a polynomial support vector machine, a radial support vector machine, linear discriminant analysis and flexible discriminant analysis, each with no resampling, ROSE and class weights. The added families are a random forest, gradient boosting, LightGBM, a fuller gradient-boosting search, and three models of the integer score. A penalised generalised additive model follows. The comparison, the failures and the stack come after those fits.
+
+<<timing, results="asis">>=
 cat(sprintf(
-  "One split (seed %s, %d combinations, %d by %d) took %.1f seconds (%.2f hours) on %d cores.\n",
-  paste(one$seeds, collapse = ","),
+  "One split, seed %s, %d combinations, took %.3f seconds on %d cores. The family run, %d combinations, seeds %s, took %.1f seconds on %d cores. The GAM and stack step took %.3f seconds on %d cores.\n",
+  paste(one$seeds, collapse = ", "),
   one$combinations,
-  one$v,
-  one$repeats,
   one$wall_seconds,
-  one_hours,
-  one$cores
-))
-cat(sprintf(
-  "The full family run (%d combinations, seeds %s) took %.1f seconds (%.2f hours) on %d cores.\n",
+  one$cores,
   run$combinations,
-  paste(run$seeds, collapse = ","),
+  paste(run$seeds, collapse = ", "),
   run$wall_seconds,
-  full_hours,
-  run$cores
-))
-gam_path <- file.path(results_dir, "run_gam_stack.rds")
-if (file.exists(gam_path)) {
-  gam_run <- readRDS(gam_path)
-  cat(sprintf(
-    "The GAM and stack step took %.1f seconds (%.2f hours) on %d cores.\n",
-    gam_run$wall_seconds,
-    gam_run$wall_seconds / 3600,
-    gam_run$cores
-  ))
-}
-@
-
-\section{Failures}
-
-\Sexpr{nrow(failures)} rows in \texttt{failures.tsv}.
-
-<<failures>>=
-if (nrow(failures) == 0) {
-  cat("No fit failed.\n")
-} else {
-  print(knitr::kable(failures, format = "latex", booktabs = TRUE))
-}
-@
-
-\section{Balanced accuracy and PR AUC}
-
-Means are over the five splits. The radial SVM with no resampling is the reference for the stack.
-
-<<family-table>>=
-show <- family_summary
-show$mean_ba <- fmt(show$mean_ba)
-show$mean_pr <- fmt(show$mean_pr)
-show$mean_auc <- fmt(show$mean_auc)
-print(knitr::kable(
-  show,
-  format = "latex",
-  booktabs = TRUE,
-  col.names = c("Model", "Name", "Arm", "N", "OK", "BA", "PR AUC", "ROC AUC")
+  run$cores,
+  gam_run$wall_seconds,
+  gam_run$cores
 ))
 @
 
-<<family-figure, fig.cap="Mean balanced accuracy by model and arm.">>=
-plot_df <- family_summary
-plot_df$label <- paste(plot_df$model, plot_df$arm)
-ggplot2::ggplot(plot_df, ggplot2::aes(x = reorder(label, mean_ba), y = mean_ba)) +
-  ggplot2::geom_col() +
-  ggplot2::coord_flip() +
-  ggplot2::labs(x = NULL, y = "Mean balanced accuracy")
+\subsection{Logistic regression}
+
+An elastic-net logistic regression classifies the high and low labels. The penalty and the lasso-ridge mixture are chosen by the 10 by 10 cross-validation on balanced accuracy.
+
+<<lr-means, results="asis">>=
+cat(arm_sentence(metrics, "lr"))
 @
 
-<<gam-table>>=
-if (nrow(gam_summary) == 0) {
-  cat("No GAM fits were found.\n")
-} else {
-  show <- gam_summary
-  show$mean_ba <- fmt(show$mean_ba)
-  show$mean_pr <- fmt(show$mean_pr)
-  show$mean_auc <- fmt(show$mean_auc)
-  print(knitr::kable(
-    show,
-    format = "latex",
-    booktabs = TRUE,
-    col.names = c("Model", "Name", "Arm", "N", "OK", "BA", "PR AUC", "ROC AUC")
-  ))
-}
+\subsection{Support vector machines with a polynomial kernel}
+
+A support vector machine with a polynomial kernel is tuned on cost, polynomial degree and scale.
+
+<<svm-poly-means, results="asis">>=
+cat(arm_sentence(metrics, "svm_poly"))
 @
 
-\section{Stack}
+\subsection{Support vector machines with a radial kernel}
 
-<<stack>>=
+A support vector machine with a radial kernel is tuned on cost and the radial-basis sigma. The paired gaps below use this model with no resampling as one reference.
+
+<<svm-radial-means, results="asis">>=
+cat(arm_sentence(metrics, "svm_radial"))
+@
+
+\subsection{Linear discriminant analysis}
+
+Linear discriminant analysis is fit with its penalty chosen on the same cross-validation.
+
+<<lda-means, results="asis">>=
+cat(arm_sentence(metrics, "lda"))
+@
+
+\subsection{Flexible discriminant analysis}
+
+Flexible discriminant analysis is fit with the number of retained terms and the interaction degree chosen on the same cross-validation.
+
+<<fda-means, results="asis">>=
+cat(arm_sentence(metrics, "fda"))
+@
+
+\subsection{Added models}
+
+\subsubsection{Random forest}
+
+A random forest of 500 trees is tuned on the number of variables tried at a split and the minimum node size.
+
+<<rf-means, results="asis">>=
+cat(arm_sentence(metrics, "rf"))
+@
+
+\subsubsection{Gradient boosting}
+
+Gradient boosting with 500 trees is tuned on tree depth and learning rate over a nine-point grid.
+
+<<xgb-means, results="asis">>=
+cat(arm_sentence(metrics, "xgb"))
+@
+
+\subsubsection{LightGBM}
+
+LightGBM is tuned over forty space-filling candidates. The arms are class weights and no resampling.
+
+<<lgb-means, results="asis">>=
+cat(arm_sentence(metrics, "lgb"))
+@
+
+\subsubsection{Gradient boosting with a fuller search}
+
+A fuller gradient-boosting search tunes depth, learning rate, minimum node size, the number of variables, loss reduction and the subsample size. The arms are class weights and no resampling.
+
+<<xgb-full-means, results="asis">>=
+cat(arm_sentence(metrics, "xgb_full"))
+@
+
+\subsubsection{Random forest on the score}
+
+A random forest predicts the integer quality score. Inside the cross-validation a predicted score of at least 6.5 is called high. The cut applied to the test rows is chosen from out-of-fold scores only.
+
+<<score-rf-means, results="asis">>=
+cat(arm_sentence(metrics, "score_rf"))
+@
+
+\subsubsection{LightGBM on the score}
+
+LightGBM is used in the same score setup.
+
+<<score-lgb-means, results="asis">>=
+cat(arm_sentence(metrics, "score_lgb"))
+@
+
+\subsubsection{Penalised regression on the score}
+
+A penalised linear regression predicts the score. The penalty and the mixture are tuned on a five-by-five grid, and the test cut is again chosen from out-of-fold scores.
+
+<<score-lin-means, results="asis">>=
+cat(arm_sentence(metrics, "score_lin"))
+@
+
+\subsection{Penalised GAM}
+
+A penalised generalised additive model puts a smooth on each of the eleven measurements, with five basis functions, selection of terms and REML. There is no tuning grid. Balanced accuracy is used only to place the cut-off on the out-of-fold probabilities. The arms are class weights and no resampling.
+
+<<gam-means, results="asis">>=
+cat(arm_sentence(metrics, "gam"))
+@
+
+<<gam-edf, results="asis">>=
+gam_edf_kable(results_dir)
+@
+
+\subsection{Comparison of the results}
+
+Means are taken over the five splits. A paired gap is that fit's test balanced accuracy minus the reference on the same split. The sample standard deviation is the standard deviation of those five gaps.
+
+<<mean-table, results="asis">>=
+mean_metric_kable(metrics)
+@
+
+<<gap-svm, results="asis">>=
+svm_rows <- metrics[metrics$model == "svm_radial" & metrics$arm == "none", ]
+svm_rows <- svm_rows[order(svm_rows$seed), ]
+gap_kable(
+  metrics,
+  svm_rows$bal_accuracy,
+  svm_rows$seed,
+  "Signed paired gap in test balanced accuracy against the radial SVM with no resampling. Positive means higher than that SVM on the same split."
+)
+@
+
+<<gap-average, results="asis">>=
+avg_rows <- metrics[metrics$model == "average" & metrics$arm == "mean", ]
+avg_rows <- avg_rows[order(avg_rows$seed), ]
+gap_kable(
+  metrics,
+  avg_rows$bal_accuracy,
+  avg_rows$seed,
+  "Signed paired gap in test balanced accuracy against the simple average. Positive means higher than that average on the same split."
+)
+@
+
+<<headline, results="asis">>=
 cat(sprintf(
-  "Radial SVM, no resampling: mean BA %s, mean PR AUC %s.\n",
-  fmt(mean(svm_none$bal_accuracy)),
-  fmt(mean(svm_none$pr_auc))
+  paste0(
+    "The random forest with no resampling is the strongest simple fit on precision-recall, ",
+    "with mean balanced accuracy %s and mean PR AUC %s. ",
+    "The score random forest is beside it, with mean balanced accuracy %s and mean PR AUC %s. ",
+    "The radial SVM with no resampling is the reference, ",
+    "with mean balanced accuracy %s and mean PR AUC %s.\n"
+  ),
+  num17(rf$ba), num17(rf$pr),
+  num17(score_rf$ba), num17(score_rf$pr),
+  num17(svm_ref$ba), num17(svm_ref$pr)
 ))
-cat(sprintf(
-  "Stack: mean BA %s, mean PR AUC %s. Statuses: %s.\n",
-  fmt(mean(stack$bal_accuracy)),
-  fmt(mean(stack$pr_auc)),
-  paste(sprintf("%d:%s", stack$seed, stack$status), collapse = ", ")
-))
-cat(sprintf(
-  "Average of the three inputs: mean BA %s, mean PR AUC %s.\n",
-  fmt(mean(average$bal_accuracy)),
-  fmt(mean(average$pr_auc))
-))
-cat(sprintf("Drop rule keep: %s.\n", if (isTRUE(decision$keep)) "yes" else "no"))
-if (!is.null(decision$svm_gap)) {
-  cat(sprintf(
-    "Paired gap versus the radial SVM: positive on %d of 5, mean %s, sd %s.\n",
-    decision$svm_gap$positive,
-    fmt(decision$svm_gap$mean),
-    fmt(decision$svm_gap$sd)
-  ))
-  cat(sprintf(
-    "Paired gap versus the average: positive on %d of 5, mean %s, sd %s.\n",
-    decision$average_gap$positive,
-    fmt(decision$average_gap$mean),
-    fmt(decision$average_gap$sd)
-  ))
-}
-cat("Split balanced accuracies (stack, radial SVM, average):\n")
-print(rbind(stack = decision$stack, svm = decision$svm, average = decision$average))
 @
 
-The always-low baseline balanced accuracy on these splits has mean \Sexpr{fmt(mean(baseline$bal_accuracy))}.
+\subsection{Failures}
+
+<<failures, results="asis">>=
+stopifnot(nrow(failures) == 0L)
+cat(sprintf(
+  "failures.tsv has a header and %d data rows. Every stored fit has status ok.\n",
+  nrow(failures)
+))
+@
+
+\subsection{Stack}
+
+The stack blends the out-of-fold probabilities of the radial SVM with no resampling, the random forest with no resampling, and the random forest on the score. A ridge logistic regression chooses one penalty on a 25-point grid and a cut-off from those out-of-fold probabilities. The simple average gives the three probabilities equal weight. The penalty and the cut-off are fixed before the test rows are read.
+
+The drop rule keeps the stack only when both gaps are strictly positive on at least four of the five splits and each mean gap exceeds its sample standard deviation. One gap is the stack minus the radial SVM with no resampling. The other is the stack minus the simple average.
+
+<<stack-prose, results="asis">>=
+cat(stack_prose(stack_record), "\n")
+@
+
+<<stack-gaps, results="asis">>=
+stack_gap_kable(stack_record)
+@
+
+\section{Conclusion}
+
+The classification of wines in high and low qualities makes it easier for anyone to predict the quality of the wine and make better decisions regarding its consumption. Producers can also use these models and methodologies to direct their crops and transformation processes to wines that are able to attain a better quality class, and retailers will be able to be more selective in the wines they sell.
+
+Nevertheless, the analysis holds for green wines of the \Sexpr{wine} variety. The data were collected at one time, so new observations should be taken periodically in order to check that the result still holds.
 
 \end{document}
