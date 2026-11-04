@@ -1,4 +1,5 @@
 # Checksums of red results, caches and analysis files.
+# Red results live under results/reevaluation/red/.
 # White outputs under results/reevaluation/white/ and build/white/ are omitted.
 # Sourcing this file defines the helpers. The before/after commands run only
 # when the file is executed directly.

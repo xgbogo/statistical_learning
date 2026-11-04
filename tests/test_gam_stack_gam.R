@@ -18,7 +18,7 @@ stopifnot(identical(gam$arms, c("weights", "none")))
 
 for (arm in c("weights", "none")) {
   for (seed in 2021:2025) {
-    r <- readRDS(sprintf("results/reevaluation/gam__%s__%d.rds", arm, seed))
+    r <- readRDS(sprintf("results/reevaluation/red/gam__%s__%d.rds", arm, seed))
     stopifnot(identical(sort(names(r$metrics$edf[[1]])), sort(make.names(measurements))))
     stopifnot(all(r$metrics$edf[[1]] >= 0))
     stopifnot(!is.null(r$oof), !is.null(r$test))

@@ -64,24 +64,25 @@ advance_stream <- function(seed, steps) {
 }
 
 guard_paths <- function() {
+  fits_dir <- reevaluation_dir("red")
   fits <- list.files(
-    "results/reevaluation",
+    fits_dir,
     pattern = "^(lr|svm_poly|svm_radial|lda|fda|rf|xgb)__.*\\.rds$",
     full.names = TRUE
   )
   added <- list.files(
-    "results/reevaluation",
+    fits_dir,
     pattern = "^(lgb|xgb_full|score_rf|score_lgb|score_lin)__.*\\.rds$",
     full.names = TRUE
   )
   c(
     sort(fits),
     sort(added),
-    "results/reevaluation/metrics.rds",
-    "results/reevaluation/baseline.rds",
-    "results/reevaluation/run.rds",
-    "results/reevaluation/metrics_added.rds",
-    "results/reevaluation/run_added.rds",
+    file.path(fits_dir, "metrics.rds"),
+    file.path(fits_dir, "baseline.rds"),
+    file.path(fits_dir, "run.rds"),
+    file.path(fits_dir, "metrics_added.rds"),
+    file.path(fits_dir, "run_added.rds"),
     "main.pdf"
   )
 }
@@ -169,7 +170,7 @@ comparison <- function(scored, row) {
 refit_original_pr_auc <- function() {
   Sys.setenv(OMP_NUM_THREADS = "1")
   protected <- list.files(
-    "results/reevaluation",
+    reevaluation_dir("red"),
     pattern = "^(lr|svm_poly|svm_radial|lda|fda|rf|xgb)__.*\\.rds$",
     full.names = TRUE
   )
@@ -177,7 +178,8 @@ refit_original_pr_auc <- function() {
     stop("Expected 105 protected fit files, found ", length(protected))
   }
   before <- tools::md5sum(guard_paths())
-  metrics <- readRDS("results/reevaluation/metrics.rds")
+  fits_dir <- reevaluation_dir("red")
+  metrics <- readRDS(file.path(fits_dir, "metrics.rds"))
   if (nrow(metrics) != 105) {
     stop("metrics.rds is not the original 105 rows")
   }
@@ -258,7 +260,7 @@ refit_original_pr_auc <- function() {
   }
   wall_seconds <- proc.time()[["elapsed"]] - started
 
-  dir.create("results/reevaluation/pr_original", recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(fits_dir, "pr_original"), recursive = TRUE, showWarnings = FALSE)
   rows <- vector("list", nrow(metrics))
   for (i in seq_len(nrow(metrics))) {
     chosen <- if (isTRUE(first[[i]]$within)) first[[i]] else second[[i]]
@@ -273,7 +275,8 @@ refit_original_pr_auc <- function() {
     pr_status <- if (identical(pass, "not_reproducible")) "not_reproducible" else "ok"
     pr_value <- if (identical(pr_status, "ok")) chosen$pr_auc else NA_real_
     file <- file.path(
-      "results/reevaluation/pr_original",
+      fits_dir,
+      "pr_original",
       sprintf("%s__%s__%s.rds", row$model, row$arm, row$seed)
     )
     payload <- list(
@@ -306,9 +309,9 @@ refit_original_pr_auc <- function() {
     )
   }
   summary <- dplyr::bind_rows(rows)
-  saveRDS(summary, "results/reevaluation/metrics_pr_original.rds")
+  saveRDS(summary, file.path(fits_dir, "metrics_pr_original.rds"))
 
-  baseline <- readRDS("results/reevaluation/baseline.rds")
+  baseline <- readRDS(file.path(fits_dir, "baseline.rds"))
   guess_pr <- vapply(seq_len(nrow(baseline)), function(i) {
     n_low <- baseline$tn[[i]] + baseline$fp[[i]]
     n_high <- baseline$tp[[i]] + baseline$fn[[i]]
@@ -333,7 +336,7 @@ refit_original_pr_auc <- function() {
     guess_low_pr_auc = guess_pr,
     guard_md5 = before
   )
-  saveRDS(run, "results/reevaluation/run_pr_original.rds")
+  saveRDS(run, file.path(fits_dir, "run_pr_original.rds"))
   message(sprintf(
     "Refit finished in %.1f seconds. First pass %d exact, %d within 1e-9. L'Ecuyer recovered %d. Not reproducible: %d.",
     wall_seconds,

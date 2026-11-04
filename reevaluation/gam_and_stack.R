@@ -461,11 +461,12 @@ assemble_seed <- function(outer, svm_rerun, rf_rerun, fits_dir, dataset = NULL) 
 }
 
 gam_stack_guard_paths <- function() {
+  fits_dir <- reevaluation_dir("red")
   c(
     guard_paths(),
-    sort(list.files("results/reevaluation/pr_original", pattern = "\\.rds$", full.names = TRUE)),
-    "results/reevaluation/metrics_pr_original.rds",
-    "results/reevaluation/run_pr_original.rds",
+    sort(list.files(file.path(fits_dir, "pr_original"), pattern = "\\.rds$", full.names = TRUE)),
+    file.path(fits_dir, "metrics_pr_original.rds"),
+    file.path(fits_dir, "run_pr_original.rds"),
     "fit.R",
     "utils/recipes/step_recipe.R"
   )

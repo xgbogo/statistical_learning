@@ -25,13 +25,13 @@ scratch <- function(csvs) {
 }
 results_in <- function(dir) sort(list.files(file.path(dir, "results"), recursive = TRUE))
 
-# Red, as today (passes today).
+# Red writes under results/reevaluation/red/.
 red_dir <- scratch(c("winequality-red.csv", "winequality-white.csv"))
 old <- setwd(red_dir)
 red_run <- fit_reevaluation(seeds = 2021L, model_tags = character(0))
 setwd(old)
-stopifnot(identical(results_in(red_dir), c("reevaluation/baseline.rds", "reevaluation/metrics.rds", "reevaluation/run.rds")))
-red_baseline <- readRDS(file.path(red_dir, "results/reevaluation/baseline.rds"))
+stopifnot(identical(results_in(red_dir), c("reevaluation/red/baseline.rds", "reevaluation/red/metrics.rds", "reevaluation/red/run.rds")))
+red_baseline <- readRDS(file.path(red_dir, "results/reevaluation/red/baseline.rds"))
 stopifnot(nrow(red_baseline) == 1L, red_baseline$n_test < 400L)
 
 # White, with no red CSV and no red results on disk.
