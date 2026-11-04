@@ -13,9 +13,9 @@ put <- function(path, text = path) {
   writeLines(text, file.path(tree, path))
 }
 red <- c(
-  "results/reevaluation/metrics.rds",
-  "results/reevaluation/lr__none__2021.rds",
-  "results/reevaluation/oof_rerun/rf__none__2021.rds",
+  "results/reevaluation/red/metrics.rds",
+  "results/reevaluation/red/lr__none__2021.rds",
+  "results/reevaluation/red/oof_rerun/rf__none__2021.rds",
   "results/fits/lr__fd.rds",
   "build/reevaluation.pdf",
   "build/figures/reeval-a.pdf",
@@ -67,7 +67,7 @@ stopifnot(file.exists(before_file))
 put("results/reevaluation/white/new_white_fit.rds")
 stopifnot(run("after") == 0)
 stopifnot(identical(readLines(before_file), readLines(after_file)))
-put("results/reevaluation/metrics.rds", "changed")
+put("results/reevaluation/red/metrics.rds", "changed")
 stopifnot(run("after") != 0)
 
 unlink(tree, recursive = TRUE)

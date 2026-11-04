@@ -29,12 +29,12 @@ stopifnot(all(c(
   "main.pdf",
   "data/winequality-red.csv",
   "reevaluation/report.Rnw",
-  "results/reevaluation/metrics.rds",
-  "results/reevaluation/stack_decision.rds"
+  "results/reevaluation/red/metrics.rds",
+  "results/reevaluation/red/stack_decision.rds"
 ) %in% paths))
 red_fits <- file.path(
-  "results/reevaluation",
-  list.files("results/reevaluation", pattern = "^[a-z_]+__[a-z]+__[0-9]{4}\\.rds$")
+  "results/reevaluation/red",
+  list.files("results/reevaluation/red", pattern = "^[a-z_]+__[a-z]+__[0-9]{4}\\.rds$")
 )
 stopifnot(length(red_fits) == 150L, all(red_fits %in% paths))
 

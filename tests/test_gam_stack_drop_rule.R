@@ -29,7 +29,7 @@ d <- c(0.02, 0.03, 0.02, 0.025, 0.03)
 stopifnot(isTRUE(all.equal(keep$svm$sd, sd(d))))
 
 # The recorded verdict matches the rule applied to the saved test balanced accuracy.
-decision <- readRDS("results/reevaluation/stack_decision.rds")
+decision <- readRDS("results/reevaluation/red/stack_decision.rds")
 stopifnot(length(decision$stack) == 5, length(decision$svm) == 5, length(decision$average) == 5)
 stopifnot(identical(decision$keep, stack_drop_rule(decision$stack, decision$svm, decision$average)$keep))
 cat("drop rule: ok\n")
